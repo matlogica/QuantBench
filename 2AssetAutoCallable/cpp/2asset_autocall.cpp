@@ -15,6 +15,9 @@
 #include <numeric>
 #include <algorithm>
 #include <chrono>
+#include <iostream>
+#include <string>
+#include <iomanip>
 
 typedef idouble Real;
 
@@ -486,6 +489,8 @@ inline std::vector<std::vector<std::pair<Real, Real>>> generateNormalRandoms(
 inline Real monteCarloPhoenixNoteWithRandoms(
     const PhoenixAutocallableNote& note,
     const std::vector<std::vector<std::pair<Real, Real>>>& randomVars,
+    Real a1_spot,
+    Real a2_spot,
     Real vol1,
     Real vol2,
     Real correlation,
@@ -514,8 +519,8 @@ inline Real monteCarloPhoenixNoteWithRandoms(
     
     for (int path = 0; path < numPaths; ++path) {
         // Initial asset prices for this path
-        Real price1 = note.a1_init;
-        Real price2 = note.a2_init;
+        Real price1 = a1_spot;
+        Real price2 = a2_spot;
         
         // Store asset price paths
         std::vector<Real> path1(numSteps + 1);
@@ -569,9 +574,47 @@ inline Real monteCarloPhoenixNoteWithRandoms(
 
 // Structure to hold sensitivity results
 struct SensitivityResults {
+
+    template<class stream>
+    void outputHeaders(stream& str, std::string prefix) {
+        str 
+            << prefix << "price_time,"
+            << prefix << "risk_time,"
+            << prefix << "price,"
+            << prefix << "dPricedVol1,"
+            << prefix << "dPricedVol2,"
+            << prefix << "dPricedCorr,"
+            << prefix << "dPricedSpot1,"
+            << prefix << "dPricedSpot2,"
+            << prefix << "gamma_spot1,"
+            << prefix << "gamma_spot2"
+        ;
+    }
+    template<class stream>
+    void output(stream& str) {
+        str
+            << price_time << ","
+            << risk_time << ","
+            << price << ","
+            << dPricedVol1 << ","
+            << dPricedVol2 << ","
+            << dPricedCorr << ","
+            << dPricedSpot1 << ","
+            << dPricedSpot2 << ","
+            << gamma_spot1 << ","
+            << gamma_spot2
+        ;
+    }
+
+
     double price_time;
     double risk_time;
     Real price;
+    Real gamma_spot1;
+    Real gamma_spot2;
+    Real dPricedSpot1;
+    Real dPricedSpot2;
+    
     Real dPricedVol1;
     Real dPricedVol2;
     Real dPricedCorr;
@@ -582,14 +625,16 @@ struct SensitivityResults {
 inline SensitivityResults calculateSensitivitiesWithFixedRandoms(
     const PhoenixAutocallableNote& note,
     const std::vector<std::vector<std::pair<Real, Real>>>& randomVars,
+    Real a1_spot,
+    Real a2_spot,
     Real vol1,
     Real vol2,
     Real correlation,
     Real r,
     Real tMax,
     Real smoothingParam = 0.0,
-    Real bumpSize = 0.001,
-    unsigned int seed = 12345
+    Real vol_bump_size = 0.001,
+    Real spot_bump_size = 1.0 // %
 ) {
     SensitivityResults results;
 
@@ -597,7 +642,7 @@ inline SensitivityResults calculateSensitivitiesWithFixedRandoms(
        
     // Base price
     results.price = monteCarloPhoenixNoteWithRandoms(
-        note, randomVars, vol1, vol2, correlation, r, tMax, smoothingParam, false
+        note, randomVars, a1_spot, a2_spot, vol1, vol2, correlation, r, tMax, smoothingParam, false
     );
 
     std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
@@ -606,33 +651,58 @@ inline SensitivityResults calculateSensitivitiesWithFixedRandoms(
 
 //    return results;
 
+    Real a1_spot_bump_size = a1_spot * spot_bump_size / 100.0;
+
+    // Calculate dPricedSpot1 using bump-and-revalue with the same random variables
+    Real bumpedPriceSpotUp1 = monteCarloPhoenixNoteWithRandoms(
+        note, randomVars, a1_spot + a1_spot_bump_size, a2_spot, vol1, vol2, correlation, r, tMax, smoothingParam
+    );
+    Real bumpedPriceSpotDown1 = monteCarloPhoenixNoteWithRandoms(
+        note, randomVars, a1_spot - a1_spot_bump_size, a2_spot, vol1, vol2, correlation, r, tMax, smoothingParam
+    );
+    results.dPricedSpot1 = (bumpedPriceSpotUp1 - bumpedPriceSpotDown1) / (2.0 * a1_spot_bump_size);
+    results.gamma_spot1 = (bumpedPriceSpotUp1 - 2.0 * results.price + bumpedPriceSpotDown1) / (a1_spot_bump_size * a1_spot_bump_size);
+
+    // Calculate dPricedSpot2 using bump-and-revalue with the same random variables
+
+    Real a2_spot_bump_size = a2_spot * spot_bump_size / 100.0;
+
+    Real bumpedPriceSpotUp2 = monteCarloPhoenixNoteWithRandoms(
+        note, randomVars, a1_spot, a2_spot + a2_spot_bump_size, vol1, vol2, correlation, r, tMax, smoothingParam
+    );
+    Real bumpedPriceSpotDown2 = monteCarloPhoenixNoteWithRandoms(
+        note, randomVars, a1_spot, a2_spot - a2_spot_bump_size, vol1, vol2, correlation, r, tMax, smoothingParam
+    );
+    results.dPricedSpot2 = (bumpedPriceSpotUp2 - bumpedPriceSpotDown2) / (2.0 * a2_spot_bump_size);
+    results.gamma_spot2 = (bumpedPriceSpotUp2 - 2.0 * results.price + bumpedPriceSpotDown2) / (a2_spot_bump_size * a2_spot_bump_size);
+
     // Calculate dPricedVol1 using bump-and-revalue with the same random variables
     Real bumpedPriceVolUp1 = monteCarloPhoenixNoteWithRandoms(
-        note, randomVars, vol1 + bumpSize, vol2, correlation, r, tMax, smoothingParam
+        note, randomVars, a1_spot, a2_spot, vol1 + vol_bump_size, vol2, correlation, r, tMax, smoothingParam
     );
     Real bumpedPriceVolDown1 = monteCarloPhoenixNoteWithRandoms(
-        note, randomVars, vol1 - bumpSize, vol2, correlation, r, tMax, smoothingParam
+        note, randomVars, a1_spot, a2_spot, vol1 - vol_bump_size, vol2, correlation, r, tMax, smoothingParam
     );
 
-    results.dPricedVol1 = (bumpedPriceVolUp1 - bumpedPriceVolDown1) / (2.0 * bumpSize);
+    results.dPricedVol1 = (bumpedPriceVolUp1 - bumpedPriceVolDown1) / (2.0 * vol_bump_size);
     
     // Calculate dPricedVol2 using bump-and-revalue with the same random variables
     Real bumpedPriceVolUp2 = monteCarloPhoenixNoteWithRandoms(
-        note, randomVars, vol1, vol2 + bumpSize, correlation, r, tMax, smoothingParam
+        note, randomVars, a1_spot, a2_spot, vol1, vol2 + vol_bump_size, correlation, r, tMax, smoothingParam
     );
     Real bumpedPriceVolDown2 = monteCarloPhoenixNoteWithRandoms(
-        note, randomVars, vol1, vol2 - bumpSize, correlation, r, tMax, smoothingParam
+        note, randomVars, a1_spot, a2_spot, vol1, vol2 - vol_bump_size, correlation, r, tMax, smoothingParam
     );
-    results.dPricedVol2 = (bumpedPriceVolUp2 - bumpedPriceVolDown2) / (2.0 * bumpSize);
+    results.dPricedVol2 = (bumpedPriceVolUp2 - bumpedPriceVolDown2) / (2.0 * vol_bump_size);
     
     // Calculate dPricedCorr using bump-and-revalue with the same random variables
     Real bumpedPriceCorrUp = monteCarloPhoenixNoteWithRandoms(
-        note, randomVars, vol1, vol2, correlation + 1. * bumpSize, r, tMax, smoothingParam
+        note, randomVars, a1_spot, a2_spot, vol1, vol2, correlation + 1. * vol_bump_size, r, tMax, smoothingParam
     );
     Real bumpedPriceCorrDown = monteCarloPhoenixNoteWithRandoms(
-        note, randomVars, vol1, vol2, correlation - 1. * bumpSize, r, tMax, smoothingParam
+        note, randomVars, a1_spot, a2_spot, vol1, vol2, correlation - 1. * vol_bump_size, r, tMax, smoothingParam
     );
-    results.dPricedCorr = (bumpedPriceCorrUp - bumpedPriceCorrDown) / (2.0 * 1. * bumpSize);
+    results.dPricedCorr = (bumpedPriceCorrUp - bumpedPriceCorrDown) / (2.0 * 1. * vol_bump_size);
 
     std::chrono::high_resolution_clock::time_point end2 = std::chrono::high_resolution_clock::now();
 
@@ -648,7 +718,8 @@ struct AADCPricingKernel {
     std::shared_ptr<aadc::AADCFunctions<mmType> > aadc_funcs;
     std::vector<std::pair<aadc::AADCArgument, aadc::AADCArgument> > random_normals;
 
-    // We can add sports here as well to reuse kernel for different spot values (for example for gamma or intraday pricing)
+    aadc::AADCArgument spot1_arg;
+    aadc::AADCArgument spot2_arg;
 
     aadc::AADCArgument vol1_arg;
     aadc::AADCArgument vol2_arg;
@@ -661,6 +732,8 @@ struct AADCPricingKernel {
 std::shared_ptr<AADCPricingKernel> recordAADCKernel(
     const PhoenixAutocallableNote& note,
     const std::vector<std::vector<std::pair<Real, Real>>>& randomVars,
+    Real a1_spot,
+    Real a2_spot,
     Real vol1,
     Real vol2,
     Real correlation,
@@ -686,13 +759,15 @@ std::shared_ptr<AADCPricingKernel> recordAADCKernel(
         res->random_normals[i].second = onePathRandomVars[0][i].second.markAsInputNoDiff();
     }
 
+    res->spot1_arg = a1_spot.markAsInput();
+    res->spot2_arg = a2_spot.markAsInput();
     res->vol1_arg = vol1.markAsInput();
     res->vol2_arg = vol2.markAsInput();
     res->correlation_arg = correlation.markAsInput();
     res->r_arg = r.markAsInput();
 
     auto path_payoff = monteCarloPhoenixNoteWithRandoms(
-        note, onePathRandomVars, vol1, vol2, correlation, r, tMax, smoothingParam
+        note, onePathRandomVars, a1_spot, a2_spot, vol1, vol2, correlation, r, tMax, smoothingParam
     );
 
     res->path_price_result = path_payoff.markAsOutput();
@@ -708,10 +783,13 @@ std::shared_ptr<AADCPricingKernel> recordAADCKernel(
 auto calculateSensitivitiesWithFixedRandomsAADC(
     std::shared_ptr<AADCPricingKernel> kernel,
     const std::vector<std::vector<std::pair<Real, Real>>>& randomVars,
+    Real a1_spot,
+    Real a2_spot,
     Real vol1,
     Real vol2,
     Real correlation,
-    Real r
+    Real r,
+    double spot_bump_size = 5.0 // %
 ) {
     SensitivityResults results;
 
@@ -729,9 +807,19 @@ auto calculateSensitivitiesWithFixedRandomsAADC(
     ws->setVal(kernel->r_arg, r.val);
 
     results.price = 0.;
+    results.dPricedSpot1 = 0.;
+    results.dPricedSpot2 = 0.;
     results.dPricedVol1 = 0.;
     results.dPricedVol2 = 0.;
     results.dPricedCorr = 0.;
+
+    Real dPricedSpot1_Up = 0.;
+    Real dPricedSpot2_Up = 0.;
+    Real dPricedSpot1_Down = 0.;
+    Real dPricedSpot2_Down = 0.;
+
+    Real a1_spot_bump_size = a1_spot * spot_bump_size / 100.0;
+    Real a2_spot_bump_size = a2_spot * spot_bump_size / 100.0;
 
     for (int i = 0; i < num_avx_paths; ++i) {
         // Set normals for 4 paths
@@ -741,28 +829,65 @@ auto calculateSensitivitiesWithFixedRandomsAADC(
                 ws->valp(kernel->random_normals[j].second)[k] = randomVars[i * aadc::mmSize<mmType>() + k][j].second.val;
             }
         }
-        // Calculate the price
-        kernel->aadc_funcs->forward(*ws);
-        results.price += aadc::mmSum(ws->val(kernel->path_price_result));
 
-        if(0) if (i == 0) {
-            for (int k = 0; k < aadc::mmSize<mmType>(); ++k) {
-                std::cout << "AADC Path " << i * aadc::mmSize<mmType>() + k << " price: " << ws->valp(kernel->path_price_result)[k] << std::endl;
+        for (int ext_scen_i = 0; ext_scen_i < 5; ++ext_scen_i) { // 0 - normal, 1 - spot1 up, 2 - spot2 up, 3 - spot1 down, 4 - spot2 down
+            ws->setVal(kernel->spot1_arg, a1_spot.val);
+            ws->setVal(kernel->spot2_arg, a2_spot.val);
+            if (ext_scen_i == 1) {
+                ws->setVal(kernel->spot1_arg, a1_spot.val + a1_spot_bump_size.val);
+            } else if (ext_scen_i == 2) {
+                ws->setVal(kernel->spot2_arg, a2_spot.val + a2_spot_bump_size.val);
+            } else if (ext_scen_i == 3) {
+                ws->setVal(kernel->spot1_arg, a1_spot.val - a1_spot_bump_size.val);
+            } else if (ext_scen_i == 4) {
+                ws->setVal(kernel->spot2_arg, a2_spot.val - a2_spot_bump_size.val);
+            }
+            // Calculate the price
+            kernel->aadc_funcs->forward(*ws);
+            if (ext_scen_i == 0) {
+                results.price += aadc::mmSum(ws->val(kernel->path_price_result));
+            }
+
+            if(0) if (i == 0) {
+                for (int k = 0; k < aadc::mmSize<mmType>(); ++k) {
+                    std::cout << "AADC Path " << i * aadc::mmSize<mmType>() + k << " price: " << ws->valp(kernel->path_price_result)[k] << std::endl;
+                }
+            }
+
+            // Calculate the sensitivities
+            ws->setDiff(kernel->path_price_result, 1.0);
+            kernel->aadc_funcs->reverse(*ws);
+            if (ext_scen_i == 0) {
+                results.dPricedSpot1 += aadc::mmSum(ws->diff(kernel->spot1_arg));
+                results.dPricedSpot2 += aadc::mmSum(ws->diff(kernel->spot2_arg));
+                results.dPricedVol1 += aadc::mmSum(ws->diff(kernel->vol1_arg));
+                results.dPricedVol2 += aadc::mmSum(ws->diff(kernel->vol2_arg));
+                results.dPricedCorr += aadc::mmSum(ws->diff(kernel->correlation_arg));
+            } else if (ext_scen_i == 1) {
+                dPricedSpot1_Up += aadc::mmSum(ws->diff(kernel->spot1_arg));
+            } else if (ext_scen_i == 2) {
+                dPricedSpot2_Up += aadc::mmSum(ws->diff(kernel->spot2_arg));
+            } else if (ext_scen_i == 3) {
+                dPricedSpot1_Down += aadc::mmSum(ws->diff(kernel->spot1_arg));
+            } else if (ext_scen_i == 4) {
+                dPricedSpot2_Down += aadc::mmSum(ws->diff(kernel->spot2_arg));
             }
         }
-
-        // Calculate the sensitivities
-        ws->setDiff(kernel->path_price_result, 1.0);
-        kernel->aadc_funcs->reverse(*ws);
-        results.dPricedVol1 += aadc::mmSum(ws->diff(kernel->vol1_arg));
-        results.dPricedVol2 += aadc::mmSum(ws->diff(kernel->vol2_arg));
-        results.dPricedCorr += aadc::mmSum(ws->diff(kernel->correlation_arg));
     }
 
     results.price /= num_paths;
+    results.dPricedSpot1 /= num_paths;
+    results.dPricedSpot2 /= num_paths;
     results.dPricedVol1 /= num_paths;
     results.dPricedVol2 /= num_paths;
     results.dPricedCorr /= num_paths;
+
+    dPricedSpot1_Up /= num_paths;
+    dPricedSpot1_Down /= num_paths;
+    dPricedSpot2_Up /= num_paths;
+    dPricedSpot2_Down /= num_paths;
+    results.gamma_spot1 = (dPricedSpot1_Up - dPricedSpot1_Down) / (2.0 * a1_spot_bump_size);
+    results.gamma_spot2 = (dPricedSpot2_Up - dPricedSpot2_Down) / (2.0 * a2_spot_bump_size);
 
     std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
 
@@ -771,11 +896,6 @@ auto calculateSensitivitiesWithFixedRandomsAADC(
     return results;
 }
     
-
-
-#include <iostream>
-#include <string>
-#include <iomanip>
 
 class ProgressBar {
 private:
@@ -809,9 +929,43 @@ public:
 //     bar.update(i+1);
 // }
 
+struct MarketParameters {
+    Real a1_spot;
+    Real a2_spot;
+    Real vol1;
+    Real vol2;
+    Real correlation;
+    Real r;
+
+    Real scenario_val;
+};
+
+void ladderScenario(const MarketParameters& base, MarketParameters& scenario, int step, int num_steps, const std::string ladder) {
+    scenario.a1_spot = base.a1_spot;
+    scenario.a2_spot = base.a2_spot;
+    scenario.vol1 = base.vol1;
+    scenario.vol2 = base.vol2;
+    scenario.correlation = base.correlation;
+    scenario.r = base.r;
+    if (ladder == "vol1") {
+        scenario.scenario_val = scenario.vol1 = base.vol1 * (0.5 + double(step) / num_steps);
+    } else if (ladder == "vol2") {
+        scenario.scenario_val = scenario.vol2 = base.vol2 * (0.5 + double(step) / num_steps);
+    } else if (ladder == "corr") {
+        scenario.scenario_val = scenario.correlation = base.correlation * (0.5 + double(step) / num_steps);
+    } else if (ladder == "spot1") {
+        scenario.scenario_val = scenario.a1_spot = base.a1_spot * (0.5 + double(step) / num_steps);
+    } else if (ladder == "spot2") {
+        scenario.scenario_val = scenario.a2_spot = base.a2_spot * (0.5 + double(step) / num_steps);
+    } else if (ladder == "r") {
+        scenario.scenario_val = scenario.r = base.r * (0.5 + double(step) / num_steps);
+    } else {
+        std::cerr << "Invalid ladder type: " << ladder << std::endl;
+    }
+}
 
 // Example usage
-void runMonteCarloExample() {
+void runMonteCarloExample(int params_set_start, int params_set_end) {
     // Create a PhoenixAutocallableNote similar to the one in the term sheet
     PhoenixAutocallableNote note;
     note.a1_init = 2095.15;  // S&P 500 initial
@@ -832,10 +986,13 @@ void runMonteCarloExample() {
     note.coupon_amounts = std::vector<Real>(8, 25.50);
     
     // Market parameters
-    Real vol1 = 0.2;         // 20% annualized volatility for S&P 500
-    Real vol2 = 0.3;         // 30% annualized volatility for Apple
-    Real correlation = 0.6;  // 60% correlation between S&P 500 and Apple
-    Real r = 0.01;           // 1% risk-free rate
+    MarketParameters market;
+    market.a1_spot = note.a1_init;  // Current S&P 500 price
+    market.a2_spot = note.a2_init;  // Current Apple price
+    market.vol1 = 0.2;         // 20% annualized volatility for S&P 500
+    market.vol2 = 0.3;         // 30% annualized volatility for Apple
+    market.correlation = 0.6;  // 60% correlation between S&P 500 and Apple
+    market.r = 0.01;           // 1% risk-free rate
     Real tMax = 2.0;         // 2 years to maturity
     
     // Monte Carlo parameters
@@ -851,41 +1008,55 @@ void runMonteCarloExample() {
 
     // Calculate price and sensitivities
     auto results = calculateSensitivitiesWithFixedRandoms(
-        note, randomVars, vol1, vol2, correlation, r, tMax, 0.0
+        note, randomVars, market.a1_spot, market.a2_spot, market.vol1, market.vol2, market.correlation, market.r, tMax, 0.0
     );
     
     std::cout << "Phoenix Autocallable Note - Monte Carlo Results:" << std::endl;
     std::cout << "Price: " << results.price << std::endl;
     std::cout << "dPricedVol1 (S&P 500): " << results.dPricedVol1 << std::endl;
     std::cout << "dPricedVol2 (Apple): " << results.dPricedVol2 << std::endl;
+    std::cout << "dPricedSpot1 (S&P 500): " << results.dPricedSpot1 << std::endl;
+    std::cout << "dPricedSpot2 (Apple): " << results.dPricedSpot2 << std::endl;
+    std::cout << "dPricedSpot1 (S&P 500) gamma: " << results.gamma_spot1 << std::endl;
+    std::cout << "dPricedSpot2 (Apple) gamma: " << results.gamma_spot2 << std::endl;
     std::cout << "dPricedCorr: " << results.dPricedCorr << std::endl;
 
-    std::cout << "==============================" << std::endl;
-    // Calculate price with different smoothing parameters
+    // Calculate price with different smoothing parameter
+    for (int bump_i = 0; bump_i < 5; ++bump_i)        
     {
+        double bump_size = 1.0 + bump_i;
+        std::cout << "============================== FD_BUMP: " << bump_size << "%" << std::endl;
         auto results = calculateSensitivitiesWithFixedRandoms(
-            note, randomVars, vol1, vol2, correlation, r, tMax, smoothingParam
+            note, randomVars, market.a1_spot, market.a2_spot, market.vol1, market.vol2, market.correlation, market.r, tMax, smoothingParam, 0.001, bump_size
         );
         
         std::cout << "Phoenix Autocallable Note - Monte Carlo Results:" << std::endl;
         std::cout << "Price: " << results.price << std::endl;
         std::cout << "dPricedVol1 (S&P 500): " << results.dPricedVol1 << std::endl;
         std::cout << "dPricedVol2 (Apple): " << results.dPricedVol2 << std::endl;
+        std::cout << "dPricedSpot1 (S&P 500): " << results.dPricedSpot1 << std::endl;
+        std::cout << "dPricedSpot2 (Apple): " << results.dPricedSpot2 << std::endl;
+        std::cout << "dPricedSpot1 (S&P 500) gamma: " << results.gamma_spot1 << std::endl;
+        std::cout << "dPricedSpot2 (Apple) gamma: " << results.gamma_spot2 << std::endl;
         std::cout << "dPricedCorr: " << results.dPricedCorr << std::endl;
     }
 
     auto aadc_kernel = recordAADCKernel(
-        note, randomVars, vol1, vol2, correlation, r, tMax, smoothingParam
+        note, randomVars, market.a1_spot, market.a2_spot, market.vol1, market.vol2, market.correlation, market.r, tMax, smoothingParam
     );
 
     auto aadc_results = calculateSensitivitiesWithFixedRandomsAADC(
-        aadc_kernel, randomVars, vol1, vol2, correlation, r
+        aadc_kernel, randomVars, market.a1_spot, market.a2_spot, market.vol1, market.vol2, market.correlation, market.r
     );
 
     std::cout << "AADCPricing - Monte Carlo Results:" << std::endl;
     std::cout << "Price: " << aadc_results.price << std::endl;
     std::cout << "dPricedVol1 (S&P 500): " << aadc_results.dPricedVol1 << std::endl;
     std::cout << "dPricedVol2 (Apple): " << aadc_results.dPricedVol2 << std::endl;
+    std::cout << "dPricedSpot1 (S&P 500): " << aadc_results.dPricedSpot1 << std::endl;
+    std::cout << "dPricedSpot2 (Apple): " << aadc_results.dPricedSpot2 << std::endl;
+    std::cout << "dPricedSpot1 (S&P 500) gamma: " << aadc_results.gamma_spot1 << std::endl;
+    std::cout << "dPricedSpot2 (Apple) gamma: " << aadc_results.gamma_spot2 << std::endl;
     std::cout << "dPricedCorr: " << aadc_results.dPricedCorr << std::endl;
     std::cout << "==============================" << std::endl;
 
@@ -894,30 +1065,42 @@ void runMonteCarloExample() {
     struct ParamSet {
         Real smoothingParam;
         int numPaths;
-    };
-    ParamSet params[16] = {
-        {0.1, 10000},
-        {0.4, 10000},
-        {0.8, 10000},
-        {1.6, 10000},
-        {2.4, 10000},
-        {3.5, 10000},
-        {0.1, 50000},
-        {0.4, 50000},
-        {0.8, 50000},
-        {0.1, 100000},
-        {0.4, 100000},
-        {0.8, 100000},
-        {0.1, 1000000},
-        {0.4, 1000000},
-        {0.8, 1000000},
-        {0.1, 10000000}
+        std::string ladder;
     };
 
-    for (const auto& param : params) {
+    std::vector<std::string> ladders = {
+        "spot1", "spot2", "vol1", "vol2", "corr"
+    };
+
+    std::vector<int> numPathsList = {
+        10000, 50000, 100000, 500000, 1000000
+    };
+
+    std::vector<double> smoothingParams = {
+        0.1, 0.4, 0.8, 1.6, 2.4, 3.5
+    };
+
+    std::vector<ParamSet> params;
+
+    for (const auto& ladder : ladders) {
+        for (const auto& numPaths : numPathsList) {
+            for (const auto& smoothingParam : smoothingParams) {
+                params.push_back({smoothingParam, numPaths, ladder});
+            }
+        }
+    }
+    // Add "truth ground with 10m paths"
+    for (const auto& ladder : ladders) {
+            params.push_back({0.8, 10000000, ladder});
+    }
+    std::cout << "Number of parameter sets: " << params.size() << std::endl;
+
+
+    for (int param_set_i = params_set_start; param_set_i < std::min<int>(params.size(), params_set_end); ++param_set_i) {
+        const auto& param = params[param_set_i];
 
         std::stringstream run_name;
-        run_name << "_run_" << param.smoothingParam << "_" << param.numPaths;
+        run_name << "run_" << param.smoothingParam << "_" << param.numPaths;
         std::cout << "==============================" << std::endl;
         std::cout << "Running with smoothingParam: " << param.smoothingParam << ", numPaths: " << param.numPaths << std::endl;
 
@@ -928,16 +1111,11 @@ void runMonteCarloExample() {
 
         // Rerecord aadc kernel because smoothingParam is hardcoded
         auto aadc_kernel = recordAADCKernel(
-            note, randomVars, vol1, vol2, correlation, r, tMax, smoothingParam
+            note, randomVars, market.a1_spot, market.a2_spot, market.vol1, market.vol2, market.correlation, market.r, tMax, smoothingParam
         );
     
-
         // Generate random variables once and reuse
         auto randomVars = generateNormalRandoms(numPaths, numSteps, seed);
-
-        Real vol1_start = 0.1;
-        Real vol1_end = 0.5;
-        Real vol1_step = 0.01;
 
         std::stringstream params_out;
 
@@ -948,33 +1126,44 @@ void runMonteCarloExample() {
 
         std::stringstream csv_out;
 
-        csv_out << "vol1,price,dPricedVol1,dPricedVol2,dPricedCorr,price_time,risk_time,";
-        csv_out << "smooth_price,smooth_dPricedVol1,smooth_dPricedVol2,smooth_dPricedCorr,smooth_price_time,smooth_risk_time,";
-        csv_out << "aadc_price,aadc_dPricedVol1,aadc_dPricedVol2,aadc_dPricedCorr,aadc_price_time,aadc_risk_time" << std::endl;
+        csv_out << param.ladder;
 
-        ProgressBar bar(
-            static_cast<int>(((vol1_end - vol1_start) / vol1_step).val) + 1
-        );
-        for (Real vol1 = vol1_start; vol1 <= vol1_end; vol1 += vol1_step) {
-            bar.update(static_cast<int>(((vol1 - vol1_start) / vol1_step).val));
+        csv_out << ","; results.outputHeaders(csv_out, "");
+        csv_out << ","; results.outputHeaders(csv_out, "smooth_");
+        csv_out << ","; results.outputHeaders(csv_out, "aadc_");
+        csv_out << std::endl;
+
+        int num_steps = 50;
+
+        ProgressBar bar(num_steps);
+
+        for (int scen_i = 0; scen_i < num_steps; ++scen_i) {
+            bar.update(scen_i+1);
+
+            MarketParameters scenario;
+
+            ladderScenario(market, scenario, scen_i, num_steps, param.ladder);
+
             auto results = calculateSensitivitiesWithFixedRandoms(
-                note, randomVars, vol1, vol2, correlation, r, tMax, 0.0
+                note, randomVars, scenario.a1_spot, scenario.a2_spot, scenario.vol1, scenario.vol2, scenario.correlation, scenario.r, tMax, 0.0
             );
             auto results_smooth = calculateSensitivitiesWithFixedRandoms(
-                note, randomVars, vol1, vol2, correlation, r, tMax, smoothingParam
+                note, randomVars, scenario.a1_spot, scenario.a2_spot, scenario.vol1, scenario.vol2, scenario.correlation, scenario.r, tMax, smoothingParam
             );
             auto aadc_results = calculateSensitivitiesWithFixedRandomsAADC(
-                aadc_kernel, randomVars, vol1, vol2, correlation, r
+                aadc_kernel, randomVars, scenario.a1_spot, scenario.a2_spot, scenario.vol1, scenario.vol2, scenario.correlation, scenario.r
             );
-            csv_out << vol1 << ", " << results.price << ", " << results.dPricedVol1 << ", " << results.dPricedVol2 << ", " << results.dPricedCorr << ", " << results.price_time << ", " << results.risk_time
-                        << ", " << results_smooth.price << ", " << results_smooth.dPricedVol1 << ", " << results_smooth.dPricedVol2 << ", " << results_smooth.dPricedCorr << ", " << results_smooth.price_time << ", " << results_smooth.risk_time
-                    << ", " << aadc_results.price << ", " << aadc_results.dPricedVol1 << ", " << aadc_results.dPricedVol2 << ", " << aadc_results.dPricedCorr << ", " << aadc_results.price_time << ", " << aadc_results.risk_time
-                    << std::endl;
-            std::cout << vol1_start << " " << vol1 << " " << vol1_end;
+            csv_out << scenario.scenario_val << ",";
+            results.output(csv_out);
+            csv_out << ",";
+            results_smooth.output(csv_out);
+            csv_out << ",";
+            aadc_results.output(csv_out);
+            csv_out << std::endl;
         }
         std::cout << "==============================" << std::endl;
 
-        std::ofstream file(std::string("sensitivity_results_") + run_name_str + ".csv");
+        std::ofstream file(std::string("sensitivity_results_") + param.ladder + "_" + run_name_str + ".csv");
         if (file.is_open()) {
             file << csv_out.str();
             file.close();
@@ -999,9 +1188,12 @@ void runMonteCarloExample() {
 TEST(AADCPricing, asset_autocall) {
 
 
-
-    runMonteCarloExample();
-
+    if (std::getenv("AADCPARAMSET") != nullptr) {
+        int params_set_start = std::stoi(std::getenv("AADCPARAMSET"));
+        runMonteCarloExample(params_set_start, params_set_start+1);
+    } else {
+        runMonteCarloExample(0, 10000000);
+    }        
 
 }
 
