@@ -1,3 +1,0 @@
-Sensitivity Analysis Parameters:
-smoothingParam: 0.1
-numPaths: 10000000
