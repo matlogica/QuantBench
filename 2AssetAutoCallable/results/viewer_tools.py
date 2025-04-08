@@ -10,7 +10,7 @@ from IPython.display import display, clear_output
 
 # Function to extract parameters from filename
 def extract_params(filename):
-    match = re.search(r'results_(.*)_run_(\d+\.\d+)_(\d+)\.csv', filename)
+    match = re.search(r'results_(.*)_run_([\d\.]+)_(\d+)\.csv', filename)
     if match:
         ladder = match.group(1)
         smoothing = float(match.group(2))
