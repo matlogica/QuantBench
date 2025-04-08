@@ -28,7 +28,7 @@ typedef idouble Real;
 inline Real fastSigmoid(const Real& a, const Real& b, const Real& h) {
     if (h == 0) {
         // Handle the sharp transition case
-        return a < b ? 1.0 : 0.0;
+        return iIf(a < b, 1.0, 0.0);
     }
     
     // Scale input to sigmoid by h
@@ -41,7 +41,7 @@ inline Real fastSigmoid(const Real& a, const Real& b, const Real& h) {
 
 inline Real contLess(const Real& a, const Real& b, const Real& h) {
     if (h == 0) {
-        return a < b ? 1.0 : 0.0;
+        return iIf(a < b , 1.0 , 0.0);
     }
 
     return fastSigmoid(a, b, h);
@@ -775,6 +775,15 @@ std::shared_ptr<AADCPricingKernel> recordAADCKernel(
     std::cout << "payoff : " << path_payoff << std::endl;
 
     res->aadc_funcs->stopRecording();
+
+    assert(res->aadc_funcs->getPassiveWarnings().size() == 0);
+
+    if (res->aadc_funcs->getPassiveWarnings().size() > 0) {
+        std::cout << "AADCPricingKernel: Passive warnings: " << std::endl;
+        for (const auto& warning : res->aadc_funcs->getPassiveWarnings()) {
+            std::cout << warning.location << ":" << warning.line << std::endl;
+        }
+    }
     
     return res;
 }
@@ -1077,8 +1086,8 @@ void runMonteCarloExample(int params_set_start, int params_set_end) {
     };
 
     std::vector<double> smoothingParams = {
-        0.1, 0.4, 0.8, 1.6, 2.4, 3.5
-    };
+        0.0, 0.1, 0.4, 0.8, 1.6, 2.4, 3.5
+};
 
     std::vector<ParamSet> params;
 
