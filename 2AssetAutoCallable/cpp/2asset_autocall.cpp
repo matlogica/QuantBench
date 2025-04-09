@@ -58,19 +58,14 @@ inline Real contNot(const Real& a) {
 // If the condition is not met (i.e., if either underlying drops below 70% of its initial level on an observation date), no coupon is paid for that period
 
 // This is implemented for 2 assets, but we can generalize it to n assets
-inline Real coupon(const Real& a1_init, const Real& a2_init, const Real& a1, const Real& a2, const Real& b1, const Real& b2, const Real& amount, const Real& H) {
+inline Real coupon(const Real& a1_init, const Real& a2_init, const Real& a1, const Real& a2, const Real& b, const Real& amount, const Real& H) {
 
-    Real h1 = H* a1_init;
-    Real h2 = H* a2_init;
     Real a1_perf = a1 / a1_init;
     Real a2_perf = a2 / a2_init;
 
-    Real a1_is_worse = contLess(a1_perf, a2_perf, H * 1.0);
+    Real pay_coupon = contLess(b, aadc::min<Real>(a1_perf, a2_perf), H);
 
-    Real pay_if_a1_is_worse = a1_is_worse * contLess(b1, a1, h1);
-    Real pay_if_a2_is_worse = contNot(a1_is_worse) * contLess(b2, a2, h2);
-
-    Real coupon = amount * (pay_if_a1_is_worse + pay_if_a2_is_worse);
+    Real coupon = amount * pay_coupon;
 
     return coupon;
 }
@@ -94,26 +89,18 @@ inline Real coupon(const Real& a1_init, const Real& a2_init, const Real& a1, con
 // $1,000 × [Final Reference Level / Initial Reference Level]
 // This means the investor participates directly in the downside performance of the worst-performing underlying
 
-inline Real finalPrincipalProtection(const Real& a1_init, const Real& a2_init, const Real& a1, const Real& a2, const Real& b1, const Real& b2, const Real& amount, const Real& H) {
-
-    Real h1 = H* a1_init;
-    Real h2 = H* a2_init;
+inline Real finalPrincipalProtection(const Real& a1_init, const Real& a2_init, const Real& a1, const Real& a2, const Real& b, const Real& amount, const Real& H) {
 
     Real a1_perf = a1 / a1_init;
     Real a2_perf = a2 / a2_init;
 
-    Real pay_if_a1_is_worse = contLess(a1_perf, a2_perf, H * 1.0);
-    Real pay_if_a2_is_worse = contNot( pay_if_a1_is_worse);
+    Real worst_performer = aadc::min<Real>(a1_perf, a2_perf);
 
-    Real a1_under = contLess(a1, b1, h1);
-    Real a2_under = contLess(a2, b2, h2);
+    Real above_barrier = contLess(b, worst_performer, H * 1.0);
 
-    Real principal_at_end = pay_if_a1_is_worse * (
-        contNot(a1_under) * amount + a1_under * amount * a1 / a1_init
-    )
-    + pay_if_a2_is_worse * (
-        contNot(a2_under) * amount + a2_under * amount * a2 / a2_init
-    );
+    Real principal_at_end = amount * above_barrier
+        + contNot(above_barrier) * amount * worst_performer
+    ;
 
     return principal_at_end;
 
@@ -123,7 +110,7 @@ struct PhoenixAutocallableNote {
     Real a1_init;
     Real a2_init;
     std::vector<Real> coupon_amounts;
-    Real a1_barrier, a2_barrier;
+    Real barrier;
     Real a1_autocall_barrier, a2_autocall_barrier;
 
     Real nominal;
@@ -153,7 +140,7 @@ inline Real pathPayoff(
             total_amount += not_autocalled_so_far * coupon(
                 note.a1_init, note.a2_init,
                 a1[cp_i], a2[cp_i],
-                note.a1_barrier, note.a2_barrier,
+                note.barrier,
                 note.coupon_amounts[cp_i], H
             );
         }
@@ -167,7 +154,7 @@ inline Real pathPayoff(
                 coupon(
                     note.a1_init, note.a2_init,
                     a1[cp_i], a2[cp_i],
-                    note.a1_barrier, note.a2_barrier,
+                    note.barrier,
                     note.coupon_amounts[cp_i], H
                 )
             );
@@ -179,7 +166,7 @@ inline Real pathPayoff(
     Real final_amount = finalPrincipalProtection(
         note.a1_init, note.a2_init,
         a1.back(), a2.back(),
-        note.a1_barrier, note.a2_barrier,
+        note.barrier,
         note.nominal, H
     );
     
@@ -198,8 +185,7 @@ class PhoenixAutocallableNoteTest : public ::testing::Test {
             note.a2_init = 97.82;    // Apple initial level
             
             // Set barrier levels (70% of initial)
-            note.a1_barrier = 0.7 * note.a1_init;  // S&P 500 barrier
-            note.a2_barrier = 0.7 * note.a2_init;  // Apple barrier
+            note.barrier = 0.70;
             
             // Set autocall barriers (100% of initial)
             note.a1_autocall_barrier = 1.0 * note.a1_init;
@@ -237,47 +223,47 @@ class PhoenixAutocallableNoteTest : public ::testing::Test {
         // Test coupon payment when Asset 1 is worse and above barrier
         Real a1_init = 100.0, a2_init = 100.0;
         Real a1 = 80.0, a2 = 90.0;  // Asset 1 is worse
-        Real barrier1 = 70.0, barrier2 = 70.0;
+        Real barrier = 0.70;
         Real amount = 25.50;
         
-        EXPECT_NEAR(AAD_PASSIVE(coupon(a1_init, a2_init, a1, a2, barrier1, barrier2, amount, 0.0)), 25.50, 1e-10);
-        EXPECT_NEAR(AAD_PASSIVE(coupon(a1_init, a2_init, a1, a2, barrier1, barrier2, amount, 0.1)), 25.50, 1e-2);
+        EXPECT_NEAR(AAD_PASSIVE(coupon(a1_init, a2_init, a1, a2, barrier, amount, 0.0)), 25.50, 1e-10);
+        EXPECT_NEAR(AAD_PASSIVE(coupon(a1_init, a2_init, a1, a2, barrier, amount, 0.1)), 25.50, 1e-2);
         
         // Test coupon payment when Asset 2 is worse and above barrier
         a1 = 90.0, a2 = 80.0;  // Asset 2 is worse
-        EXPECT_NEAR(AAD_PASSIVE(coupon(a1_init, a2_init, a1, a2, barrier1, barrier2, amount, 0.0)), 25.50, 1e-10);
-        EXPECT_NEAR(AAD_PASSIVE(coupon(a1_init, a2_init, a1, a2, barrier1, barrier2, amount, 0.1)), 25.50, 1e-2);
+        EXPECT_NEAR(AAD_PASSIVE(coupon(a1_init, a2_init, a1, a2, barrier, amount, 0.0)), 25.50, 1e-10);
+        EXPECT_NEAR(AAD_PASSIVE(coupon(a1_init, a2_init, a1, a2, barrier, amount, 0.1)), 25.50, 1e-2);
         
         // Test no coupon when Asset 1 is worse and below barrier
         a1 = 60.0, a2 = 90.0;  // Asset 1 is worse and below barrier
-        EXPECT_NEAR(AAD_PASSIVE(coupon(a1_init, a2_init, a1, a2, barrier1, barrier2, amount, 0.0)), 0.0, 1e-10);
-        EXPECT_NEAR(AAD_PASSIVE(coupon(a1_init, a2_init, a1, a2, barrier1, barrier2, amount, 0.1)), 0.0, 1e-2);
+        EXPECT_NEAR(AAD_PASSIVE(coupon(a1_init, a2_init, a1, a2, barrier, amount, 0.0)), 0.0, 1e-10);
+        EXPECT_NEAR(AAD_PASSIVE(coupon(a1_init, a2_init, a1, a2, barrier, amount, 0.1)), 0.0, 1e-2);
         
         // Test no coupon when Asset 2 is worse and below barrier
         a1 = 90.0, a2 = 60.0;  // Asset 2 is worse and below barrier
-        EXPECT_NEAR(AAD_PASSIVE(coupon(a1_init, a2_init, a1, a2, barrier1, barrier2, amount, 0.0)), 0.0, 1e-10);
-        EXPECT_NEAR(AAD_PASSIVE(coupon(a1_init, a2_init, a1, a2, barrier1, barrier2, amount, 0.1)), 0.0, 1e-2);
+        EXPECT_NEAR(AAD_PASSIVE(coupon(a1_init, a2_init, a1, a2, barrier, amount, 0.0)), 0.0, 1e-10);
+        EXPECT_NEAR(AAD_PASSIVE(coupon(a1_init, a2_init, a1, a2, barrier, amount, 0.1)), 0.0, 1e-2);
     }
     
     TEST(FinalPrincipalProtectionTest, BasicFunctionality) {
         Real a1_init = 100.0, a2_init = 100.0;
-        Real barrier1 = 70.0, barrier2 = 70.0;
+        Real barrier = 0.70;
         Real amount = 1000.0;
         
         // Test full principal when both assets above barrier
         Real a1 = 80.0, a2 = 90.0;  // Both above barrier, Asset 1 is worse
-        EXPECT_NEAR(AAD_PASSIVE(finalPrincipalProtection(a1_init, a2_init, a1, a2, barrier1, barrier2, amount,0.0)), 1000.0, 1e-10);
-        EXPECT_NEAR(AAD_PASSIVE(finalPrincipalProtection(a1_init, a2_init, a1, a2, barrier1, barrier2, amount,0.1)), 1000.0, 0.1);
+        EXPECT_NEAR(AAD_PASSIVE(finalPrincipalProtection(a1_init, a2_init, a1, a2, barrier, amount,0.0)), 1000.0, 1e-10);
+        EXPECT_NEAR(AAD_PASSIVE(finalPrincipalProtection(a1_init, a2_init, a1, a2, barrier, amount,0.1)), 1000.0, 0.1);
         
         // Test proportional loss when Asset 1 is worse and below barrier
         a1 = 60.0, a2 = 90.0;  // Asset 1 below barrier
-        EXPECT_NEAR(AAD_PASSIVE(finalPrincipalProtection(a1_init, a2_init, a1, a2, barrier1, barrier2, amount,0.0)), 600.0, 1e-10);
-        EXPECT_NEAR(AAD_PASSIVE(finalPrincipalProtection(a1_init, a2_init, a1, a2, barrier1, barrier2, amount,0.1)), 600.0, 0.1);
+        EXPECT_NEAR(AAD_PASSIVE(finalPrincipalProtection(a1_init, a2_init, a1, a2, barrier, amount,0.0)), 600.0, 1e-10);
+        EXPECT_NEAR(AAD_PASSIVE(finalPrincipalProtection(a1_init, a2_init, a1, a2, barrier, amount,0.1)), 600.0, 0.1);
         
         // Test proportional loss when Asset 2 is worse and below barrier
         a1 = 90.0, a2 = 50.0;  // Asset 2 below barrier
-        EXPECT_NEAR(AAD_PASSIVE(finalPrincipalProtection(a1_init, a2_init, a1, a2, barrier1, barrier2, amount,0.0)), 500.0, 1e-10);
-        EXPECT_NEAR(AAD_PASSIVE(finalPrincipalProtection(a1_init, a2_init, a1, a2, barrier1, barrier2, amount,0.1)), 500.0, 0.1);
+        EXPECT_NEAR(AAD_PASSIVE(finalPrincipalProtection(a1_init, a2_init, a1, a2, barrier, amount,0.0)), 500.0, 1e-10);
+        EXPECT_NEAR(AAD_PASSIVE(finalPrincipalProtection(a1_init, a2_init, a1, a2, barrier, amount,0.1)), 500.0, 0.1);
     }
     
     // Now test the full path payoff
@@ -779,10 +765,11 @@ std::shared_ptr<AADCPricingKernel> recordAADCKernel(
     assert(res->aadc_funcs->getPassiveWarnings().size() == 0);
 
     if (res->aadc_funcs->getPassiveWarnings().size() > 0) {
-        std::cout << "AADCPricingKernel: Passive warnings: " << std::endl;
+        std::cout << "AADCPricingKernel: Active 2 Passive conversion warnings: " << std::endl;
         for (const auto& warning : res->aadc_funcs->getPassiveWarnings()) {
             std::cout << warning.location << ":" << warning.line << std::endl;
         }
+        exit(1);
     }
     
     return res;
@@ -981,8 +968,7 @@ void runMonteCarloExample(int params_set_start, int params_set_end) {
     note.a2_init = 97.82;    // Apple initial
     
     // Barriers at 70% of initial
-    note.a1_barrier = 0.7 * note.a1_init;
-    note.a2_barrier = 0.7 * note.a2_init;
+    note.barrier = 0.70;
     
     // Autocall barriers at 100% of initial
     note.a1_autocall_barrier = 1.0 * note.a1_init;
@@ -1087,7 +1073,7 @@ void runMonteCarloExample(int params_set_start, int params_set_end) {
 
     std::vector<double> smoothingParams = {
         0.0, 0.1, 0.4, 0.8, 1.6, 2.4, 3.5
-};
+    };
 
     std::vector<ParamSet> params;
 
