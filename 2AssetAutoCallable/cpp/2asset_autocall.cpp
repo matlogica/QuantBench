@@ -697,7 +697,6 @@ inline SensitivityResults calculateSensitivitiesWithFixedRandoms(
     return results;
 }
 
-
 typedef __m256d mmType;
 
 struct AADCPricingKernel {
@@ -936,13 +935,35 @@ struct MarketParameters {
     Real scenario_val;
 };
 
-void ladderScenario(const MarketParameters& base, MarketParameters& scenario, int step, int num_steps, const std::string ladder) {
+bool useSameSeed(const std::string& ladder) {
+
+    auto postfix_iter = ladder.find_last_of("-");
+    if (postfix_iter != std::string::npos) {
+        std::string postfix = ladder.substr(postfix_iter + 1);
+        if (postfix == "noisy") {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+std::string stripLadder(const std::string& ladder) {
+    auto postfix_iter = ladder.find_last_of("-");
+    if (postfix_iter != std::string::npos) {
+        return ladder.substr(0, postfix_iter);
+    }
+    return ladder;
+}
+
+void ladderScenario(const MarketParameters& base, MarketParameters& scenario, int step, int num_steps, const std::string _ladder) {
     scenario.a1_spot = base.a1_spot;
     scenario.a2_spot = base.a2_spot;
     scenario.vol1 = base.vol1;
     scenario.vol2 = base.vol2;
     scenario.correlation = base.correlation;
     scenario.r = base.r;
+    auto ladder = stripLadder(_ladder);
     if (ladder == "vol1") {
         scenario.scenario_val = scenario.vol1 = base.vol1 * (0.5 + double(step) / num_steps);
     } else if (ladder == "vol2") {
@@ -1064,7 +1085,8 @@ void runMonteCarloExample(int params_set_start, int params_set_end) {
     };
 
     std::vector<std::string> ladders = {
-        "spot1", "spot2", "vol1", "vol2", "corr"
+        "spot1", "spot2", "vol1", "vol2", "corr",
+        "spot1-noisy", "spot2-noisy", "vol1-noisy", "vol2-noisy", "corr-noisy"
     };
 
     std::vector<int> numPathsList = {
@@ -1134,6 +1156,11 @@ void runMonteCarloExample(int params_set_start, int params_set_end) {
 
         for (int scen_i = 0; scen_i < num_steps; ++scen_i) {
             bar.update(scen_i+1);
+
+            if (!useSameSeed(param.ladder)) {
+                // // Generate new independent random variables for each scenario point
+                randomVars = generateNormalRandoms(numPaths, numSteps, seed + scen_i * 17); 
+            }
 
             MarketParameters scenario;
 
