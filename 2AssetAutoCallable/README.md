@@ -4,6 +4,8 @@
 
 This repository provides a benchmark comparing Automatic Adjoint Differentiation (AAD) and traditional Bump & Revalue methods for calculating sensitivities of Phoenix Autocallable Notes. The focus is on addressing the challenges of calculating accurate Greeks for non-smooth payoffs through smoothing techniques combined with AAD, therefore we use simplified log normal model assumptions and focus on handling discontinuous payoffs.
 
+**Interactive Explorer is available here**: [Results Viewer Notebook](https://github.com/matlogica/QuantBench/blob/main/2AssetAutoCallable/results/results_viewer.ipynb). Click binder to use the explorer.
+
 ### 1. What is a Phoenix Autocallable Note?
 
 A structured product linked to multiple underlying assets with three key features:
