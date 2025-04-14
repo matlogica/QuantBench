@@ -32,6 +32,8 @@ Three distinct approaches were tested:
 
 The smoothing was implemented using a continuous approximation of digital functions (`contLess()`), which ensures the differentiability required for AAD compatibility.
 
+![Discontinuous Payoffs - Implementation Approaches](results/images/AAD-Smoothing-Implementation-Approaches.png)
+
 ## Key Findings
 
 ### 1. Convergence Speed
@@ -59,15 +61,24 @@ Correlation sensitivity proved particularly challenging:
 ### 4. Digital Payoff Challenges
 
 AAD without smoothing produces incorrect results for discontinuous payoffs:
+
+![Discontinuous Payoffs - Incorrect Payoffs with No Smoothing](results/images/AAD-Smoothing-No-Smoothing.png)
 - For digital payoffs, non-smoothed AAD produces zero delta (or wrong results) because the derivative is zero almost everywhere except at the discontinuity
 - Smoothing creates a region around discontinuities that contributes appropriately to sensitivity calculations
 - The smoothing parameter can be tuned depending on how far the option is from the money
+
+
+![Discontinuous Payoffs - Payoffs with Smoothing](results/images/AAD-Smoothing-Smoothed.png)
 
 ### 5. Random Seed Impact
 
 Random seed selection has significant methodological implications:
 - Using the same seed across ladder points can create smooth-looking but potentially misleading results
+
+![Discontinuous Payoffs - Random Seed Impact - Same Ladder Points](results/images/AAD-Smoothing-same-ladder.png)
 - Using different seeds for different ladder points reveals true convergence properties
+  
+![Discontinuous Payoffs - Random Seed Impact - Different Ladder Points](results/images/AAD-Smoothing-different-ladder.png)
 - Production systems should maintain fixed seeds for trade valuation while being aware of potential MC noise
 
 ## Implementation
