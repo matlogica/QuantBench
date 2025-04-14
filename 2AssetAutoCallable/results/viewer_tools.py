@@ -81,7 +81,7 @@ def create_interactive_explorer(ladders, smoothing_params, path_counts, referenc
     )
     
     plot_type = widgets.RadioButtons(
-        options=[f'Values vs Ladder', 'Convergence vs Path Count', 'Computation Time', 'RMSE vs Path Count'],
+        options=[f'Values vs Ladder'], #, 'Convergence vs Path Count', 'Computation Time', 'RMSE vs Path Count'],
         description='Plot Type:',
         style={'description_width': 'initial'},
         layout={'width': 'max-content'}
